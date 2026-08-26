@@ -119,11 +119,14 @@ IA, para quem for ler o histórico do repositório:
   decorativo pronto (não é reativa ao áudio de verdade — decidido de
   propósito para evitar a complexidade de captura de áudio em tempo real
   e reenvio de textura por frame, que o hardware não suporta bem).
-- [ ] Iniciar o app automaticamente no login do Windows.
-- [ ] Chamar `tools/prepare_gif.py` automaticamente de dentro do menu
-  "Trocar GIF..." (hoje é um passo manual antes de trocar; a ferramenta já
-  existe e resolve redimensionamento/fps/transparência, só falta plugar
-  no fluxo do app).
+- [x] Iniciar o app automaticamente no login do Windows — atalho em
+  `shell:startup` (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Minitela.lnk`)
+  apontando direto pro PowerShell em modo oculto. Pra desativar, apague
+  esse atalho.
+- [x] Redimensionamento/limite de fps automático ao trocar GIF pelo menu
+  — `minitela.ps1` chama o `ffmpeg.exe` direto (mesma lógica do
+  `tools/prepare_gif.py`, sem depender de Python no Windows) antes de
+  subir o arquivo pro dispositivo.
 
 ## Créditos
 

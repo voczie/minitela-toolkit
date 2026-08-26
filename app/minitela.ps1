@@ -6,10 +6,15 @@
 
 $ErrorActionPreference = "SilentlyContinue"
 
-$WorkDir  = "C:\Users\distopia\ahmi-work"
+$WorkDir  = Join-Path $env:USERPROFILE "ahmi-work"
 $Device   = "COM3"
 $NowPlayingMaxChars = 128  # tem que bater com o stringNum da tag NowPlaying_Text (tools/add_nowplaying_page.py)
 $IconPath = Join-Path $WorkDir "icon.png"
+# ffmpeg bundlado com o instalador do app oficial da Positivo -- usado
+# pra preparar (redimensionar + limitar fps) gifs escolhidos pelo menu
+# "Trocar GIF...", mesma logica do tools/prepare_gif.py.
+$FfmpegPath = Join-Path $env:LOCALAPPDATA "Packages\PositivoInformticaS.A.PositivoMinitela_6yhrh9dmgepzj\LocalState\Minitela\assets\ffmpeg.exe"
+$GifSlotFps = 10
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
@@ -365,6 +370,29 @@ function Get-GifDimensions {
     return @{ Width = $w; Height = $h }
 }
 
+function Invoke-PrepareGif {
+    param([string]$InputPath, [string]$OutputPath, [int]$Width, [int]$Height, [int]$Fps)
+
+    if (-not (Test-Path $FfmpegPath)) { return $false }
+
+    # mesma logica do tools/prepare_gif.py: paleta unica compartilhada
+    # entre todos os quadros (evita flicker de cor), scale+crop sem
+    # distorcer (preenche o quadro, recorta o excesso).
+    $baseVf = "fps=$Fps,scale=${Width}:${Height}:force_original_aspect_ratio=increase,crop=${Width}:${Height}"
+    $palette = "$OutputPath.palette.png"
+
+    $p1 = Start-Process -FilePath $FfmpegPath -ArgumentList @("-y", "-i", $InputPath, "-vf", "$baseVf,palettegen", $palette) -NoNewWindow -Wait -PassThru
+    if ($p1.ExitCode -ne 0 -or -not (Test-Path $palette) -or (Get-Item $palette).Length -eq 0) {
+        Remove-Item $palette -ErrorAction SilentlyContinue
+        return $false
+    }
+
+    $p2 = Start-Process -FilePath $FfmpegPath -ArgumentList @("-y", "-i", $InputPath, "-i", $palette, "-lavfi", "$baseVf[x];[x][1:v]paletteuse", $OutputPath) -NoNewWindow -Wait -PassThru
+    Remove-Item $palette -ErrorAction SilentlyContinue
+
+    return ($p2.ExitCode -eq 0 -and (Test-Path $OutputPath))
+}
+
 function Set-ZipEntryBytes {
     param([string]$ZipPath, [string]$EntryName, [byte[]]$NewBytes)
     Add-Type -AssemblyName System.IO.Compression
@@ -447,14 +475,10 @@ function Invoke-GifSwap {
     $dlg.Title = "Escolher GIF para o slot $($SlotIdx + 1)"
     if ($dlg.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { return }
 
-    $bytes = [System.IO.File]::ReadAllBytes($dlg.FileName)
-    $dims = Get-GifDimensions -Bytes $bytes
-    if (-not $dims) {
+    $rawBytes = [System.IO.File]::ReadAllBytes($dlg.FileName)
+    if (-not (Get-GifDimensions -Bytes $rawBytes)) {
         $notifyIcon.ShowBalloonTip(5000, "Minitela", "Isso n$([char]0x00E3)o parece ser um GIF v$([char]0x00E1)lido.", [System.Windows.Forms.ToolTipIcon]::Error)
         return
-    }
-    if ($dims.Width -ne 192 -or $dims.Height -ne 192) {
-        $notifyIcon.ShowBalloonTip(5000, "Minitela", "Aviso: o gif $($dims.Width)x$($dims.Height) n$([char]0x00E3)o $([char]0x00E9) 192x192 (tamanho do slot) - pode ficar distorcido.", [System.Windows.Forms.ToolTipIcon]::Warning)
     }
 
     $Global:Busy = $true
@@ -462,6 +486,19 @@ function Invoke-GifSwap {
     $notifyIcon.ShowBalloonTip(4000, "Minitela", "Trocando GIF $($SlotIdx + 1)... isso leva uns 30s (n$([char]0x00E3)o feche o app).", [System.Windows.Forms.ToolTipIcon]::Info)
 
     try {
+        # prepara automaticamente: redimensiona pro 192x192 do slot (sem
+        # distorcer) e limita a taxa de quadros -- mesma logica do
+        # tools/prepare_gif.py, so que chamada direto daqui.
+        $preparedPath = Join-Path $WorkDir "gif_prepared_tmp.gif"
+        if (Invoke-PrepareGif -InputPath $dlg.FileName -OutputPath $preparedPath -Width 192 -Height 192 -Fps $GifSlotFps) {
+            $bytes = [System.IO.File]::ReadAllBytes($preparedPath)
+            Remove-Item $preparedPath -ErrorAction SilentlyContinue
+        } else {
+            # ffmpeg falhou ou nao foi encontrado -- usa o arquivo original
+            # sem redimensionar/limitar fps (comportamento antigo).
+            $bytes = $rawBytes
+        }
+
         $zipPath = Join-Path $WorkDir "Zip\file.zip"
         Set-ZipEntryBytes -ZipPath $zipPath -EntryName $GifSlots[$SlotIdx].File -NewBytes $bytes
 

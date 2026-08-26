@@ -21,14 +21,34 @@ import subprocess
 import sys
 
 # Caminho padrao do ffmpeg.exe -- bundlado com o instalador do app oficial
-# da Positivo, nao precisa instalar nada a parte. Em formato POSIX (uso via
-# WSL); se for rodar isso direto no PowerShell do Windows, passe --ffmpeg
-# com o caminho em "C:\..." em vez de usar o padrao.
-FFMPEG_PATH = (
-    "/mnt/c/Users/distopia/AppData/Local/Packages"
-    "/PositivoInformticaS.A.PositivoMinitela_6yhrh9dmgepzj/LocalState"
-    "/Minitela/assets/ffmpeg.exe"
-)
+# da Positivo, nao precisa instalar nada a parte. Detectado automaticamente
+# via %LOCALAPPDATA% do Windows (chamando cmd.exe, uso tipico via WSL); se
+# a deteccao falhar (ex.: rodando fora do WSL) ou apontar pro lugar errado,
+# passe --ffmpeg com o caminho certo.
+def _detect_ffmpeg_path():
+    try:
+        raw = subprocess.run(
+            ["/mnt/c/Windows/System32/cmd.exe", "/c", "echo %LOCALAPPDATA%"],
+            capture_output=True, text=True, timeout=5,
+            encoding="utf-8", errors="replace",
+        ).stdout
+        # cmd.exe imprime avisos de UNC path antes do valor quando chamado
+        # de dentro do WSL -- o que importa e a ultima linha nao-vazia.
+        lines = [l.strip() for l in raw.splitlines() if l.strip()]
+        out = lines[-1] if lines else ""
+        if len(out) > 2 and out[1] == ":":
+            candidate = "/mnt/" + out[0].lower() + "/" + out[3:].replace("\\", "/") + (
+                "/Packages/PositivoInformticaS.A.PositivoMinitela_6yhrh9dmgepzj"
+                "/LocalState/Minitela/assets/ffmpeg.exe"
+            )
+            if os.path.exists(candidate):
+                return candidate
+    except Exception:
+        pass
+    return None
+
+
+FFMPEG_PATH = _detect_ffmpeg_path()
 
 
 def to_windows_path(path):
@@ -65,8 +85,8 @@ def main():
     width = args.width or args.size or 192
     height = args.height or args.size or 192
 
-    if not os.path.exists(args.ffmpeg):
-        print(f"ERRO: ffmpeg nao encontrado em {args.ffmpeg}\n"
+    if not args.ffmpeg or not os.path.exists(args.ffmpeg):
+        print(f"ERRO: ffmpeg nao encontrado (deteccao automatica falhou, caminho: {args.ffmpeg}).\n"
               f"Informe o caminho certo com --ffmpeg, ou instale o ffmpeg e aponte pra ele.")
         sys.exit(1)
 
