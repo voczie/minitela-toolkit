@@ -1,0 +1,20 @@
+# Binarios proprietarios da Positivo (grandes, nao redistribuiveis) - ver README
+app/Gen/
+
+# Projeto atual do dispositivo (contem gifs/layout pessoais, e e binario opaco)
+app/Zip/
+
+# Saida do gerador de ACF
+app/ACF/
+
+# Binarios compilados - ver README para instrucoes de build
+app/sidecar.exe
+app/sidecar-fixed.exe
+app/*.exe
+
+# Logs e arquivos temporarios
+*.log
+
+# Python
+__pycache__/
+*.pyc
