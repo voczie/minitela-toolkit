@@ -10,7 +10,8 @@ real, e deixa trocar os 3 gifs customizados direto por um menu.
 ```
 app/
   minitela.ps1            programa principal (bandeja + atalho + métricas + troca de gif)
-  Iniciar Minitela.bat    launcher de duplo-clique
+  watchdog.ps1            inicia o minitela.ps1 e reinicia sozinho se ele cair/travar
+  Iniciar Minitela.bat    launcher de duplo-clique (chama o watchdog, não o app direto)
   icon.png                ícone da bandeja
 tools/
   swap_gif.py                troca um gif dentro do file.zip via linha de comando
@@ -119,10 +120,17 @@ IA, para quem for ler o histórico do repositório:
   decorativo pronto (não é reativa ao áudio de verdade — decidido de
   propósito para evitar a complexidade de captura de áudio em tempo real
   e reenvio de textura por frame, que o hardware não suporta bem).
-- [x] Iniciar o app automaticamente no login do Windows — atalho em
-  `shell:startup` (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\Minitela.lnk`)
-  apontando direto pro PowerShell em modo oculto. Pra desativar, apague
-  esse atalho.
+- [x] Iniciar o app automaticamente no login do Windows — uma cópia de
+  `Iniciar Minitela.bat` em `shell:startup`
+  (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`), que chama
+  o `watchdog.ps1` em modo oculto. Pra desativar, apague esse `.bat` da
+  pasta de inicialização.
+- [x] Watchdog (`watchdog.ps1`): reinicia o app sozinho se ele cair ou
+  travar (detecta processo morto, `Responding=$false`, ou um heartbeat
+  que parou de atualizar). Reconhece trocas de gif em andamento (não
+  reinicia no meio de um upload/reboot do dispositivo) e respeita o
+  "Sair" do menu (não fica reiniciando à toa quando você fecha de
+  propósito).
 - [x] Redimensionamento/limite de fps automático ao trocar GIF pelo menu
   — `minitela.ps1` chama o `ffmpeg.exe` direto (mesma lógica do
   `tools/prepare_gif.py`, sem depender de Python no Windows) antes de

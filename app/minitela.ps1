@@ -343,6 +343,14 @@ function Get-BatteryInfo {
 }
 
 function Update-Metrics {
+    # heartbeat pro watchdog.ps1: prova que o timer (e portanto o loop de
+    # mensagens da UI) ainda esta rodando. Durante uma troca de gif a thread
+    # de UI fica ocupada rodando Invoke-GifSwap ate o fim, entao esse timer
+    # simplesmente nao dispara nesse periodo -- por isso o watchdog tambem
+    # respeita um arquivo de lock separado (ver Invoke-GifSwap) em vez de
+    # confiar so na idade do heartbeat.
+    try { Set-Content -Path (Join-Path $WorkDir "heartbeat.txt") -Value (Get-Date -Format o) -Force } catch {}
+
     if ($Global:Busy) { return }
     $cpu = Get-CPUPercent
     $ram = Get-RAMPercent
@@ -485,6 +493,12 @@ function Invoke-GifSwap {
     $metricsTimer.Stop()
     $notifyIcon.ShowBalloonTip(4000, "Minitela", "Trocando GIF $($SlotIdx + 1)... isso leva uns 30s (n$([char]0x00E3)o feche o app).", [System.Windows.Forms.ToolTipIcon]::Info)
 
+    # avisa o watchdog.ps1 que uma operacao longa e legitima esta rolando,
+    # pra ele nao confundir isso com o app travado e reiniciar no meio de
+    # um upload/reboot do dispositivo.
+    $lockPath = Join-Path $WorkDir "gifswap.lock"
+    Set-Content -Path $lockPath -Value (Get-Date -Format o) -Force
+
     try {
         # prepara automaticamente: redimensiona pro 192x192 do slot (sem
         # distorcer) e limita a taxa de quadros -- mesma logica do
@@ -548,6 +562,7 @@ function Invoke-GifSwap {
         $metricsTimer.Start()
     } finally {
         $Global:Busy = $false
+        Remove-Item $lockPath -ErrorAction SilentlyContinue
     }
 }
 
@@ -580,6 +595,10 @@ for ($i = 0; $i -lt $GifSlots.Count; $i++) {
 $contextMenu.Items.Add("-") | Out-Null
 $exitItem = $contextMenu.Items.Add("Sair")
 $exitItem.add_Click({
+    # avisa o watchdog.ps1 que essa saida foi intencional (clique em
+    # "Sair"), pra ele nao reiniciar o app / se desligar tambem em vez de
+    # tratar isso como uma queda.
+    try { Set-Content -Path (Join-Path $WorkDir "stop_requested.flag") -Value (Get-Date -Format o) -Force } catch {}
     $notifyIcon.Visible = $false
     $metricsTimer.Stop()
     $Global:link.Dispose()
