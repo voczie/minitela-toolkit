@@ -120,11 +120,12 @@ IA, para quem for ler o histórico do repositório:
   decorativo pronto (não é reativa ao áudio de verdade — decidido de
   propósito para evitar a complexidade de captura de áudio em tempo real
   e reenvio de textura por frame, que o hardware não suporta bem).
-- [x] Iniciar o app automaticamente no login do Windows — uma cópia de
-  `Iniciar Minitela.bat` em `shell:startup`
-  (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`), que chama
-  o `watchdog.ps1` em modo oculto. Pra desativar, apague esse `.bat` da
-  pasta de inicialização.
+- [x] Iniciar o app automaticamente no login do Windows — atalho
+  `Minitela.lnk` em `shell:startup`
+  (`%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\`), apontando
+  direto pro `powershell.exe -WindowStyle Hidden -File watchdog.ps1` (sem
+  passar por `.bat`, então não abre nenhuma janela de console). Pra
+  desativar, apague esse atalho.
 - [x] Watchdog (`watchdog.ps1`): reinicia o app sozinho se ele cair ou
   travar (detecta processo morto, `Responding=$false`, ou um heartbeat
   que parou de atualizar). Reconhece trocas de gif em andamento (não
