@@ -1,4 +1,4 @@
-# Minitela - tray + atalho global (Ctrl+D) para trocar de tela.
+# Minitela - tray + atalho global (tecla MINITELA do R15M) para trocar de tela.
 # Fala com o dispositivo via serial diretamente deste processo PowerShell
 # (System.IO.Ports.SerialPort), sem abrir um .exe novo por comando -- isso
 # evita tanto o bloqueio do Device Guard em executaveis novos quanto a
@@ -552,7 +552,7 @@ function Invoke-GifSwap {
         if ($pageOk) {
             $notifyIcon.ShowBalloonTip(4000, "Minitela", "GIF $($SlotIdx + 1) atualizado!", [System.Windows.Forms.ToolTipIcon]::Info)
         } else {
-            $notifyIcon.ShowBalloonTip(8000, "Minitela", "GIF $($SlotIdx + 1) atualizado, mas o dispositivo nao confirmou a troca de tela -- aperte Ctrl+D.", [System.Windows.Forms.ToolTipIcon]::Warning)
+            $notifyIcon.ShowBalloonTip(8000, "Minitela", "GIF $($SlotIdx + 1) atualizado, mas o dispositivo nao confirmou a troca de tela -- aperte a tecla MINITELA.", [System.Windows.Forms.ToolTipIcon]::Warning)
         }
     } catch {
         $notifyIcon.ShowBalloonTip(8000, "Minitela", "Erro ao trocar o GIF: $_", [System.Windows.Forms.ToolTipIcon]::Error)
@@ -616,11 +616,15 @@ $hotkeyForm.add_HotkeyPressed({
     Set-Screen ((($Global:CurIdx) + 1) % $Screens.Count)
 })
 
-$MOD_CONTROL = 0x0002
-$VK_D = 0x44
-$hotkeyOk = [HotkeyForm]::RegisterHotKey($hotkeyForm.Handle, 1, $MOD_CONTROL, $VK_D)
+# tecla dedicada "MINITELA" do teclado do R15M -- identificada via hook de
+# baixo nivel (nao aparece documentada em lugar nenhum): manda VK_F16
+# (0x7F), sem nenhum modificador. MOD_NOREPEAT evita disparar WM_HOTKEY
+# varias vezes se ela ficar segurando a tecla.
+$MOD_NOREPEAT = 0x4000
+$VK_F16 = 0x7F
+$hotkeyOk = [HotkeyForm]::RegisterHotKey($hotkeyForm.Handle, 1, $MOD_NOREPEAT, $VK_F16)
 if (-not $hotkeyOk) {
-    $notifyIcon.ShowBalloonTip(5000, "Minitela", "N$([char]0x00E3)o consegui registrar Ctrl+D (provavelmente j$([char]0x00E1) est$([char]0x00E1) em uso por outro programa). Use o menu do $([char]0x00ED)cone na bandeja.", [System.Windows.Forms.ToolTipIcon]::Warning)
+    $notifyIcon.ShowBalloonTip(5000, "Minitela", "N$([char]0x00E3)o consegui registrar a tecla MINITELA (provavelmente j$([char]0x00E1) est$([char]0x00E1) em uso por outro programa). Use o menu do $([char]0x00ED)cone na bandeja.", [System.Windows.Forms.ToolTipIcon]::Warning)
 }
 
 # --- timer de metricas (a cada 5s) ---
