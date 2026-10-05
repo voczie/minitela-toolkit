@@ -143,12 +143,23 @@ nada que já existe. Ainda sobram os índices 8 e 9 pra futuras páginas.
   Solução usada: escrever os caracteres acentuados via código
   (`$([char]0x00E9)` para "é") em vez de digitá-los literalmente no
   arquivo, o que funciona independente da codificação do arquivo.
-- **Device Guard da organização bloqueia `.exe` novos e não assinados**, de
-  forma pouco previsível (um binário `.exe` recém-compilado pode ser
-  bloqueado mesmo sendo idêntico em espírito a outro que já rodava). Por
-  isso o app é um script PowerShell (`minitela.ps1`) chamando um único
-  `.exe` já permitido (`sidecar-fixed.exe`), em vez de ser ele mesmo
-  compilado.
+- **Device Guard/Smart App Control do Windows bloqueia `.exe` novos e não
+  assinados**, de forma pouco previsível (um binário recém-compilado pode
+  rodar bem por semanas e ser bloqueado depois, sem mudar nada).
+  `minitela.ps1` por isso é um script PowerShell, não um `.exe` compilado.
+  No início do projeto o upload/reboot do dispositivo rodava via um `.exe`
+  de terceiros (`sidecar-fixed.exe`, compilado do SideCar) chamado como
+  processo separado — até o Smart App Control passar a bloquear esse `.exe`
+  especificamente. Reimplementamos o protocolo de upload inteiro
+  (RequestDownload/DownloadData/DownloadComplete, baseado em
+  `core/upload.go` do SideCar) direto em C# embutido no `minitela.ps1`
+  (classe `MinitelaLink`), eliminando essa dependência por completo.
+- **Upload pela porta serial é lento: espere uns 8-10 minutos pra um ACF de
+  ~5-6 MB.** O dispositivo responde a cada pedaço de 1024 bytes
+  (`RequestDownload` devolve esse tamanho como `maxPageSize`), e a 115200
+  baud isso vira o gargalo real — não é bug, é o limite físico da porta.
+  Um ACF maior que ~6,3 MB (ver limite de upload mais abaixo) demoraria
+  ainda mais, outro motivo pra manter os gifs dentro do limite de tamanho.
 - **`Add-Type` não consegue referenciar `.winmd` diretamente** (erro
   `0x80131047`) — necessário para chamar APIs WinRT modernas do Windows
   (usamos isso para "Tocando Agora" via GSMTC —

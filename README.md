@@ -30,8 +30,7 @@ docs/
 - **O app oficial "Positivo MiniTela" precisa estar instalado pelo menos
   uma vez** — não redistribuímos os binários dele aqui (ver "O que falta
   configurar" abaixo).
-- Go 1.23+ só se for compilar o `sidecar-fixed.exe` você mesmo (ver
-  abaixo). Python 3 só para os scripts de `tools/`.
+- Python 3 só para os scripts de `tools/`.
 - `ffmpeg.exe` só para `tools/prepare_gif.py` — já vem junto da instalação
   do app oficial da Positivo (`...\Minitela\assets\ffmpeg.exe`), não
   precisa instalar nada à parte.
@@ -54,17 +53,7 @@ copiados manualmente:
    ...\IDE_utils\Zip\file.zip
    ```
    Guarde uma cópia (`file.zip.orig`) antes de editar qualquer coisa.
-3. **`app/sidecar-fixed.exe`** — usado só para o upload/reboot do
-   dispositivo. É um binário [SideCar](https://github.com/FreyreCorona/SideCar)
-   compilado do branch `main` (a release oficial v0.1.26 tem um bug que
-   impede o modo CLI). Para compilar:
-   ```
-   git clone https://github.com/FreyreCorona/SideCar.git
-   cd SideCar
-   go get github.com/FreyreCorona/SideCar@main
-   GOOS=windows GOARCH=amd64 go build -o sidecar-fixed.exe .
-   ```
-4. **`app/ACF/`** — pasta vazia, só precisa existir (o gerador escreve o
+3. **`app/ACF/`** — pasta vazia, só precisa existir (o gerador escreve o
    resultado ali).
 
 ## Uso
@@ -140,9 +129,13 @@ IA, para quem for ler o histórico do repositório:
 ## Créditos
 
 - [FreyreCorona/SideCar](https://github.com/FreyreCorona/SideCar) —
-  engenharia reversa original do protocolo serial da Minitela e do
-  pipeline de geração de ACF. Este projeto reusa e adapta esse
-  conhecimento; `sidecar-fixed.exe` é esse projeto compilado do source.
+  engenharia reversa original do protocolo serial da Minitela (incluindo o
+  protocolo de upload de arquivo em `core/upload.go`) e do pipeline de
+  geração de ACF. Este projeto reusa e adapta esse conhecimento;
+  `minitela.ps1` reimplementa o protocolo de upload/reboot direto em C#
+  embutido (`MinitelaLink`), então não depende mais de rodar o binário do
+  SideCar (ver "Ideias futuras" / histórico de sessão sobre o Smart App
+  Control do Windows bloqueando esse `.exe`).
 - Positivo Informática — `AHMISimGenDemo_og.exe` e o restante da pasta
   `Gen/` são binários proprietários da Positivo, obtidos da própria
   instalação do app oficial. Não redistribuídos aqui.

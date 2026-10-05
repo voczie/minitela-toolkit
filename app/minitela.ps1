@@ -25,6 +25,7 @@ using System;
 using System.Collections.Generic;
 using System.IO.Ports;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading;
 using System.Windows.Forms;
 
@@ -204,6 +205,169 @@ public class MinitelaLink : IDisposable {
         byte[] resp = SendAndWait(0x0085, new byte[0], 0x00C5, 1500);
         if (resp == null || resp.Length < 1) return -1;
         return resp[0];
+    }
+
+    private static uint ReadU32BE(byte[] b, int offset) {
+        return (uint)((b[offset] << 24) | (b[offset + 1] << 16) | (b[offset + 2] << 8) | b[offset + 3]);
+    }
+
+    private static void WriteU32BE(byte[] b, int offset, uint value) {
+        b[offset] = (byte)((value >> 24) & 0xFF);
+        b[offset + 1] = (byte)((value >> 16) & 0xFF);
+        b[offset + 2] = (byte)((value >> 8) & 0xFF);
+        b[offset + 3] = (byte)(value & 0xFF);
+    }
+
+    // Igual ao SendAndWait, mas so ESCUTA (nao escreve nada) -- usado pro
+    // padrao "processing" (0xFFFFFFFF), onde o dispositivo responde de
+    // novo mais tarde sem que a gente tenha reenviado o comando.
+    private byte[] ReadFrame(ushort expectType, int timeoutMs) {
+        lock (_lock) {
+            var buf = new List<byte>();
+            var deadline = DateTime.Now.AddMilliseconds(timeoutMs);
+            while (DateTime.Now < deadline) {
+                try {
+                    int avail = _port.BytesToRead;
+                    if (avail > 0) {
+                        byte[] tmp = new byte[avail];
+                        _port.Read(tmp, 0, avail);
+                        buf.AddRange(tmp);
+                    }
+                } catch { }
+
+                int idx = IndexOfSeq(buf, FrameStart);
+                if (idx >= 0 && buf.Count - idx >= 8) {
+                    int ctrl = (buf[idx + 2] << 8) | buf[idx + 3];
+                    int dataLen = ctrl & 0x7FFF;
+                    int contentLen = dataLen - 2;
+                    int frameSize = 2 + 2 + 2 + contentLen + 2 + 2;
+                    if (contentLen >= 0 && buf.Count - idx >= frameSize) {
+                        int type = (buf[idx + 4] << 8) | buf[idx + 5];
+                        byte[] respContent = new byte[contentLen];
+                        buf.CopyTo(idx + 6, respContent, 0, contentLen);
+                        buf.RemoveRange(0, idx + frameSize);
+                        if (type == expectType) return respContent;
+                        continue;
+                    }
+                }
+                Thread.Sleep(10);
+            }
+            return null;
+        }
+    }
+
+    public bool SwitchState(byte value) {
+        byte[] resp = SendAndWait(0x0071, new byte[] { value }, 0x00B1, 2000);
+        return resp != null && resp.Length >= 4 && ReadU32BE(resp, 0) == 0;
+    }
+
+    public bool Reboot() {
+        // O ack do reboot quase sempre "falha" (o dispositivo desconecta no
+        // meio da espera) -- isso e esperado, o chamador deve ignorar o
+        // retorno e so esperar/reconectar (ver docs/PROTOCOL.md).
+        return SendAndWait(0x0070, new byte[0], 0x00B0, 2000) != null;
+    }
+
+    private bool RequestDownload(uint addr, uint fileSize, byte[] fileId, out uint maxPageSize) {
+        maxPageSize = 0;
+        byte[] content = new byte[24];
+        WriteU32BE(content, 0, addr);
+        WriteU32BE(content, 4, fileSize);
+        Array.Copy(fileId, 0, content, 8, 16);
+        byte[] resp = SendAndWait(0x0081, content, 0x00C1, 60000);
+        if (resp == null || resp.Length < 8) return false;
+        maxPageSize = ReadU32BE(resp, 0);
+        uint code = ReadU32BE(resp, 4);
+        if (code == 0) return true;
+        if (code != 0xFFFFFFFF) return false; // codigo de erro do dispositivo
+        // "processing": espera uma resposta seguinte com code == 0
+        var deadline = DateTime.Now.AddSeconds(30);
+        while (DateTime.Now < deadline) {
+            byte[] r2 = ReadFrame(0x00C1, 2000);
+            if (r2 == null || r2.Length < 8) continue;
+            uint c2 = ReadU32BE(r2, 4);
+            if (c2 == 0) { maxPageSize = ReadU32BE(r2, 0); return true; }
+            if (c2 != 0xFFFFFFFF) return false;
+        }
+        return false;
+    }
+
+    private bool SendChunk(uint offset, byte[] chunk, int timeoutMs) {
+        int padding = (4 - (chunk.Length & 3)) & 3;
+        byte[] content = new byte[4 + chunk.Length + padding];
+        WriteU32BE(content, 0, offset);
+        Array.Copy(chunk, 0, content, 4, chunk.Length);
+
+        for (int attempt = 0; attempt < 3; attempt++) {
+            byte[] resp = SendAndWait(0x0082, content, 0x00C2, timeoutMs);
+            if (resp == null || resp.Length < 4) continue;
+            uint code = ReadU32BE(resp, 0);
+            if (code == 0) return true;
+            if (code == 0xFFFFFFFF) {
+                byte[] resp2 = ReadFrame(0x00C2, timeoutMs);
+                if (resp2 != null && resp2.Length >= 4 && ReadU32BE(resp2, 0) == 0) return true;
+                continue;
+            }
+            // codigo de erro -- tenta de novo
+        }
+        return false;
+    }
+
+    private bool DownloadComplete(int timeoutMs) {
+        byte[] resp = SendAndWait(0x008F, new byte[0], 0x00CF, timeoutMs);
+        if (resp == null || resp.Length < 4) return false;
+        uint code = ReadU32BE(resp, 0);
+        if (code == 0) return true;
+        if (code != 0xFFFFFFFF) return false;
+        var deadline = DateTime.Now.AddSeconds(10);
+        while (DateTime.Now < deadline) {
+            byte[] r2 = ReadFrame(0x00CF, 1000);
+            if (r2 == null || r2.Length < 4) continue;
+            uint c2 = ReadU32BE(r2, 0);
+            if (c2 == 0) return true;
+            if (c2 != 0xFFFFFFFF) return false;
+        }
+        return false;
+    }
+
+    // Sobe um arquivo de textura (.acf) inteiro pro endereco de memoria da
+    // textura (0x08100000) -- reimplementacao do fluxo do UploadFile do
+    // SideCar (core/upload.go), direto aqui, pra nao depender mais de rodar
+    // um .exe de terceiros (sidecar-fixed.exe), que o Smart App Control da
+    // Positivo passou a bloquear (nao assinado). onProgress recebe 0-100.
+    public bool UploadTexture(byte[] data, Action<int> onProgress) {
+        const uint textureAddr = 0x08100000;
+        uint fileSize = (uint)data.Length;
+        byte[] fileId = MD5.Create().ComputeHash(data);
+
+        if (!Handshake()) return false;
+
+        int status = GetDownloadStatus();
+        if (status == 0x20) {
+            if (!SwitchState(0x10)) return false;
+        } else if (status != 0x10 && status != 0x11) {
+            return false; // estado invalido/sem resposta
+        }
+
+        uint maxPageSize;
+        if (!RequestDownload(textureAddr, fileSize, fileId, out maxPageSize) || maxPageSize == 0) {
+            return false;
+        }
+
+        uint offset = 0;
+        int lastPct = -1;
+        while (offset < fileSize) {
+            uint end = Math.Min(offset + maxPageSize, fileSize);
+            byte[] chunk = new byte[end - offset];
+            Array.Copy(data, offset, chunk, 0, chunk.Length);
+            if (!SendChunk(offset, chunk, 5000)) return false;
+            offset = end;
+            int pct = (int)(100L * offset / fileSize);
+            if (onProgress != null && pct != lastPct) { lastPct = pct; onProgress(pct); }
+        }
+
+        DownloadComplete(5000); // erro aqui e ignorado, igual ao SideCar original
+        return true;
     }
 
     public void Dispose() {
@@ -446,20 +610,41 @@ function Invoke-AcfGenerator {
     return ($proc.ExitCode -eq 0)
 }
 
-function Invoke-ShowPageViaSidecar {
-    param([int]$Page)
-    $sidecar = Join-Path $WorkDir "sidecar-fixed.exe"
-    $p = Start-Process -FilePath $sidecar -ArgumentList @("-mode", "cli", "-cmd", "show-page", "-page", $Page, "-device", $Device) -NoNewWindow -Wait -PassThru
-    return ($p.ExitCode -eq 0)
-}
+# Sobe o ACF gerado e reinicia o dispositivo, tudo via MinitelaLink (C#
+# embutido) -- nao depende mais de rodar o sidecar-fixed.exe como processo
+# separado. Isso passou a ser necessario depois que o Smart App Control do
+# Windows comecou a bloquear esse .exe (nao assinado); reimplementamos o
+# protocolo de upload (RequestDownload/DownloadData/DownloadComplete) igual
+# ao core/upload.go do SideCar, so que direto no MinitelaLink existente.
+$MaxUploadBytes = 6436 * 1024  # mesmo teto do SideCar (core/upload.go, maxUploadFileSize)
 
 function Invoke-UploadAndReboot {
-    $sidecar = Join-Path $WorkDir "sidecar-fixed.exe"
+    param([MinitelaLink]$Link)
     $acf = Join-Path $WorkDir "ACF\Texture.acf"
-    $upload = Start-Process -FilePath $sidecar -ArgumentList @("-mode", "cli", "-cmd", "upload", "-file", $acf, "-type", "texture", "-device", $Device) -NoNewWindow -Wait -PassThru
+    $acfBytes = [System.IO.File]::ReadAllBytes($acf)
+    if ($acfBytes.Length -gt $MaxUploadBytes) {
+        throw "ACF tem $([math]::Round($acfBytes.Length / 1KB)) KB, acima do limite de $([math]::Round($MaxUploadBytes / 1KB)) KB -- escolha um gif menor ou com menos quadros."
+    }
+    $uploadOk = $Link.UploadTexture($acfBytes, $null)
     # o reboot sempre "falha" com um erro cosmetico (o dispositivo desconecta no meio da espera pela resposta) - ignorado de proposito
-    Start-Process -FilePath $sidecar -ArgumentList @("-mode", "cli", "-cmd", "reboot", "-device", $Device) -NoNewWindow -Wait
-    return ($upload.ExitCode -eq 0)
+    [void]$Link.Reboot()
+    return $uploadOk
+}
+
+# Troca de pagina logo apos um reboot: o dispositivo aceita a escrita do
+# registrador 2 sem erro, mas ainda pode estar carregando a pagina padrao
+# por baixo (ver gotcha em docs/PROTOCOL.md) -- por isso confirma lendo o
+# registrador de volta, repetindo ate bater com o valor esperado.
+function Set-ScreenWithRetry {
+    param([MinitelaLink]$Link, [int]$Target, [int]$MaxTries = 10)
+    for ($i = 0; $i -lt $MaxTries; $i++) {
+        [void]$Link.WriteNumRegister(2, [uint32]$Target)
+        Start-Sleep -Milliseconds 800
+        $val = 0
+        if ($Link.TryReadNumRegister(2, [ref]$val) -and [int]$val -eq $Target) { return $true }
+        Start-Sleep -Seconds 1
+    }
+    return $false
 }
 
 function Connect-Minitela {
@@ -491,7 +676,7 @@ function Invoke-GifSwap {
 
     $Global:Busy = $true
     $metricsTimer.Stop()
-    $notifyIcon.ShowBalloonTip(4000, "Minitela", "Trocando GIF $($SlotIdx + 1)... isso leva uns 30s (n$([char]0x00E3)o feche o app).", [System.Windows.Forms.ToolTipIcon]::Info)
+    $notifyIcon.ShowBalloonTip(4000, "Minitela", "Trocando GIF $($SlotIdx + 1)... isso pode levar varios minutos agora (upload direto pela porta serial, sem o sidecar-fixed.exe) -- n$([char]0x00E3)o feche o app.", [System.Windows.Forms.ToolTipIcon]::Info)
 
     # avisa o watchdog.ps1 que uma operacao longa e legitima esta rolando,
     # pra ele nao confundir isso com o app travado e reiniciar no meio de
@@ -520,28 +705,18 @@ function Invoke-GifSwap {
             throw "falha ao gerar o ACF (AHMISimGenDemo_og.exe)"
         }
 
-        $Global:link.Dispose()
-        [void](Invoke-UploadAndReboot)
-        Start-Sleep -Seconds 15
-
-        # A troca de pagina pos-reboot via $Global:link (nossa conexao C#)
-        # se mostrou pouco confiavel (o dispositivo aceita o comando sem
-        # erro mas nao troca de tela, e nem ler o registrador de volta
-        # confirmou a mudanca). sidecar-fixed.exe -cmd show-page e a MESMA
-        # operacao mas usando a conexao original do SideCar (com seu proprio
-        # retry), que funcionou de forma confiavel em todos os testes
-        # manuais desta sessao -- usa ela para esse passo especifico.
-        $target = [int]$Screens[$GifSlots[$SlotIdx].ScreenIdx].Page
-        $pageOk = $false
-        for ($i = 0; $i -lt 4; $i++) {
-            if (Invoke-ShowPageViaSidecar -Page $target) { $pageOk = $true; break }
-            Start-Sleep -Seconds 3
+        if (-not (Invoke-UploadAndReboot -Link $Global:link)) {
+            throw "falha ao subir a textura pro dispositivo"
         }
+        $Global:link.Dispose()
+        Start-Sleep -Seconds 15
 
         $newLink = Connect-Minitela
         if (-not $newLink) {
             throw "n$([char]0x00E3)o reconectei ao dispositivo depois do reboot"
         }
+        $target = [int]$Screens[$GifSlots[$SlotIdx].ScreenIdx].Page
+        $pageOk = Set-ScreenWithRetry -Link $newLink -Target $target
         $Global:link = $newLink
         $metricsTimer.Start()
         $Global:CurIdx = $GifSlots[$SlotIdx].ScreenIdx
